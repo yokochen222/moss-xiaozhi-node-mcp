@@ -1,0 +1,34 @@
+{
+  "name": "mcp-calculator",
+  "version": "1.0.0",
+  "description": "MCP Calculator Server - TypeScript 实现",
+  "main": "dist/calculator.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start:calculator": "node dist/calculator.js",
+    "start:pipe": "node dist/mcp_pipe.js",
+    "dev:calculator": "tsx src/calculator.ts",
+    "dev:pipe": "tsx src/mcp_pipe.ts"
+  },
+  "keywords": [
+    "mcp",
+    "calculator",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.5",
+    "mathjs": "^12.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "@types/mathjs": "^6.0.12",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  }
+}
