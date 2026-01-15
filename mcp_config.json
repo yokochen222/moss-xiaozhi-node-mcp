@@ -3,7 +3,8 @@
     "local-stdio-calculator": {
       "type": "stdio",
       "command": "node",
-      "args": ["dist/calculator.js"]
+      "args": ["dist/calculator.js"],
+      "disabled": true
     },
     "remote-sse-server": {
       "type": "sse",
@@ -13,6 +14,12 @@
     "remote-http-server": {
       "type": "http",
       "url": "https://api.example.com/mcp",
+      "disabled": true
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@executeautomation/playwright-mcp-server"],
       "disabled": true
     }
   }
