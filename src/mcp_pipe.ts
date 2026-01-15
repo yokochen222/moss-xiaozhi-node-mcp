@@ -169,7 +169,10 @@ async function pipeWebSocketToProcess(
         logger.debug(`[${target}] << ${data.substring(0, 120)}...`);
 
         if (process.stdin && !process.stdin.destroyed) {
-          process.stdin.write(data + '\n');
+          // MCP 协议使用换行符分隔的 JSON-RPC 消息
+          // 如果数据已经以换行符结尾，直接写入；否则添加换行符
+          const message = data.endsWith('\n') ? data : data + '\n';
+          process.stdin.write(message);
         }
       } catch (error) {
         logger.error(`[${target}] WebSocket 到进程管道错误: ${error}`);
@@ -197,6 +200,7 @@ async function pipeWebSocketToProcess(
 
 /**
  * 从进程 stdout 读取数据并发送到 WebSocket
+ * MCP 协议使用换行符分隔的 JSON-RPC 消息，需要缓冲数据并按行发送
  */
 async function pipeProcessToWebSocket(
   process: ChildProcess,
@@ -209,17 +213,40 @@ async function pipeProcessToWebSocket(
       return;
     }
 
+    let buffer = '';
     process.stdout.setEncoding('utf-8');
+    
     process.stdout.on('data', (data: string) => {
       if (websocket.readyState === WebSocket.OPEN) {
-        logger.debug(`[${target}] >> ${data.substring(0, 120)}...`);
-        websocket.send(data);
+        // 将新数据添加到缓冲区
+        buffer += data;
+        
+        // 按行分割并发送完整的消息
+        const lines = buffer.split('\n');
+        // 保留最后一个不完整的行在缓冲区中
+        buffer = lines.pop() || '';
+        
+        // 发送所有完整的行
+        for (const line of lines) {
+          if (line.trim()) {
+            // 只发送非空行
+            logger.debug(`[${target}] >> ${line.substring(0, 120)}...`);
+            websocket.send(line);
+          }
+        }
       }
     });
 
     process.stdout.on('end', () => {
+      // 发送缓冲区中剩余的数据（如果有）
+      if (buffer.trim() && websocket.readyState === WebSocket.OPEN) {
+        logger.debug(`[${target}] >> ${buffer.substring(0, 120)}...`);
+        websocket.send(buffer);
+        buffer = '';
+      }
       logger.info(`[${target}] 进程输出已结束`);
-      resolve();
+      // 注意：stdout 结束不代表进程退出，不应该 resolve
+      // 只有当进程真正退出时才 resolve
     });
 
     process.stdout.on('error', (error) => {
@@ -227,7 +254,8 @@ async function pipeProcessToWebSocket(
       reject(error);
     });
 
-    process.on('exit', () => {
+    process.on('exit', (code, signal) => {
+      logger.info(`[${target}] 进程退出，代码: ${code}, 信号: ${signal}`);
       resolve();
     });
   });
@@ -259,7 +287,8 @@ async function pipeProcessStderrToTerminal(
 
     childStderr.on('end', () => {
       logger.info(`[${target}] 进程 stderr 输出已结束`);
-      resolve();
+      // 注意：stderr 结束不代表进程退出，不应该 resolve
+      // 只有当进程真正退出时才 resolve
     });
 
     process.on('exit', () => {
@@ -304,10 +333,39 @@ async function connectToServer(
     logger.info(`[${target}] 已启动服务器进程: ${cmd.join(' ')}`);
 
     // 创建三个任务: 从 WebSocket 读取并写入进程，从进程读取并写入 WebSocket，从进程 stderr 读取并输出到终端
-    await Promise.all([
-      pipeWebSocketToProcess(websocket, process, target),
-      pipeProcessToWebSocket(process, websocket, target),
-      pipeProcessStderrToTerminal(process, target),
+    // 使用 Promise.race 来处理第一个完成的任务
+    const wsToProcess = pipeWebSocketToProcess(websocket, process, target);
+    const processToWs = pipeProcessToWebSocket(process, websocket, target);
+    const stderrPipe = pipeProcessStderrToTerminal(process, target);
+    
+    // 等待任一任务完成（WebSocket 关闭或进程退出）
+    await Promise.race([
+      wsToProcess.then(() => {
+        // WebSocket 关闭，关闭 stdin 让进程知道没有更多输入
+        if (process && process.stdin && !process.stdin.destroyed) {
+          process.stdin.end();
+        }
+        // 等待进程退出（最多 5 秒）
+        return Promise.race([
+          new Promise<void>((resolve) => {
+            if (process) {
+              process.once('exit', () => resolve());
+            } else {
+              resolve();
+            }
+          }),
+          new Promise<void>((resolve) => {
+            setTimeout(() => resolve(), 5000);
+          }),
+        ]).then(() => {
+          // 等待其他管道任务完成
+          return Promise.all([processToWs, stderrPipe]);
+        });
+      }),
+      processToWs.then(() => {
+        // 进程退出，等待其他任务完成
+        return Promise.all([wsToProcess.catch(() => {}), stderrPipe]);
+      }),
     ]);
   } catch (error) {
     if (error instanceof Error) {
@@ -326,34 +384,42 @@ async function connectToServer(
       websocket.close();
     }
 
-    // 确保子进程被正确终止
-    if (process) {
-      logger.info(`[${target}] 正在终止服务器进程`);
-      try {
-        process.kill('SIGTERM');
-        // 等待进程退出，最多等待 5 秒
-        await new Promise<void>((resolve) => {
-          const proc = process; // 保存引用
-          if (!proc) {
-            resolve();
-            return;
-          }
-          const timeout = setTimeout(() => {
-            if (proc && !proc.killed) {
-              proc.kill('SIGKILL');
-            }
-            resolve();
-          }, 5000);
+    // 确保子进程被正确终止（如果还在运行）
+    if (process && !process.killed) {
+      const proc = process;
+      const isExited = new Promise<boolean>((resolve) => {
+        if (proc.exitCode !== null) {
+          resolve(true);
+          return;
+        }
+        proc.once('exit', () => resolve(true));
+        setTimeout(() => resolve(false), 100);
+      });
+      
+      const exited = await isExited;
+      if (!exited) {
+        logger.info(`[${target}] 正在终止服务器进程`);
+        try {
+          proc.kill('SIGTERM');
+          // 等待进程退出，最多等待 5 秒
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+              if (proc && !proc.killed) {
+                proc.kill('SIGKILL');
+              }
+              resolve();
+            }, 5000);
 
-          proc.on('exit', () => {
-            clearTimeout(timeout);
-            resolve();
+            proc.on('exit', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
           });
-        });
-      } catch (error) {
-        logger.error(`[${target}] 终止进程时出错: ${error}`);
+        } catch (error) {
+          logger.error(`[${target}] 终止进程时出错: ${error}`);
+        }
+        logger.info(`[${target}] 服务器进程已终止`);
       }
-      logger.info(`[${target}] 服务器进程已终止`);
     }
   }
 }
