@@ -1,32 +1,32 @@
 {
-  "name": "mcp-calculator",
+  "name": "moss-mcp-client",
   "version": "1.0.0",
-  "description": "MCP Calculator Server - TypeScript 实现",
-  "main": "dist/calculator.js",
+  "description": "MCP Client - TypeScript 实现",
   "type": "module",
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "scripts": {
-    "build": "tsc",
-    "start:calculator": "node dist/calculator.js",
-    "start:pipe": "node dist/mcp_pipe.js",
-    "dev:calculator": "tsx src/calculator.ts",
-    "dev:pipe": "tsx src/mcp_pipe.ts"
+    "test": "tsx src/camera/tools/camera.ts",
+    "dev": "tsx src/mcp_pipe.ts",
+    "postinstall": "cd node_modules/.pnpm/robotjs@0.6.0/node_modules/robotjs && npm run install || true"
   },
   "keywords": [
     "mcp",
-    "calculator",
     "typescript"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
+    "chalk": "^5.6.2",
     "dotenv": "^16.4.5",
-    "mathjs": "^12.2.0",
+    "onvif": "^0.8.1",
+    "robotjs": "^0.6.0",
     "ws": "^8.18.0",
     "zod": "^4.3.5"
   },
   "devDependencies": {
-    "@types/mathjs": "^6.0.12",
     "@types/node": "^20.14.0",
     "@types/ws": "^8.5.10",
     "tsx": "^4.16.0",

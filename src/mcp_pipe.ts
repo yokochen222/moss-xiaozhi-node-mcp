@@ -17,27 +17,17 @@
  */
 
 import WebSocket from 'ws';
+import chalk from 'chalk';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-
+import { logger } from './utils';
 import { config } from 'dotenv';
 
 // 自动加载 .env 文件中的环境变量
 config();
 
-// 日志配置
-const logger = {
-  info: (msg: string) => console.error(`[INFO] ${new Date().toISOString()} - ${msg}`),
-  warning: (msg: string) => console.error(`[WARN] ${new Date().toISOString()} - ${msg}`),
-  error: (msg: string) => console.error(`[ERROR] ${new Date().toISOString()} - ${msg}`),
-  debug: (msg: string) => {
-    // 可以通过环境变量控制是否输出 debug 日志
-    if (process.env.DEBUG) {
-      console.error(`[DEBUG] ${new Date().toISOString()} - ${msg}`);
-    }
-  },
-};
+
 
 // 重连设置
 const INITIAL_BACKOFF = 1; // 初始等待时间（秒）

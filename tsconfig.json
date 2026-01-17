@@ -15,6 +15,7 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "types/**/*"],
+  "typeRoots": ["./types"],
   "exclude": ["node_modules", "dist"]
 }
