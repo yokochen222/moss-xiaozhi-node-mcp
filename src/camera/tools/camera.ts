@@ -134,25 +134,25 @@ const camera = new onvif.Cam({
   //   }
   // })
 
-  // camera.getStatus((error: any, status: {
-  //   position: {
-  //     x: number
-  //     y: number,
-  //     zoom: number
-  //   },
-  //   moveStatus: {
-  //     panTilt: string
-  //     zoom: string
-  //   },
-  //   error?: string
-  //   utcTime: string
-  // }) => {
-  //   if (error) {
-  //     console.error('error', error)
-  //   } else {
-  //     console.log('status', status)
-  //   }
-  // })
+  camera.getStatus((error: any, status: {
+    position: {
+      x: number
+      y: number,
+      zoom: number
+    },
+    moveStatus: {
+      panTilt: string
+      zoom: string
+    },
+    error?: string
+    utcTime: string
+  }) => {
+    if (error) {
+      console.error('error', error)
+    } else {
+      console.log('status', status)
+    }
+  })
 
   // console.log('camera activeSource:', camera.activeSource)
   // camera.getNodes((error: any, nodes: any) => {
@@ -175,18 +175,70 @@ const camera = new onvif.Cam({
   //   });
   // })
 
-  camera.continuousMove({
-    x: 0.1,
-    y: 0.1,
-    profileToken: camera.activeSource.ptz.token,
-  }, (error: any, result: any) => {
-    if (error) {
-      console.error('error', error)
-    } else {
-      console.log('result', result)
+  // moveCamera('down', 1)
+})
+
+
+/**
+ * MOSS视角角度调整工具，最大值 -360度到360度，当用户需要调整角度时使用此工具
+ * @param direction 方向 ('up', 'down', 'left', 'right')
+ * @param angle 角度，最大值 -360度到360度
+ * @returns Promise<{success: boolean, message?: string, error?: string}>
+ */
+function moveCamera(direction: string, angle: number): Promise<{success: boolean, message?: string, error?: string}> {
+  return new Promise((resolve) => {
+    try {
+      // 验证角度范围
+      if (angle < -360 || angle > 360) {
+        resolve({ success: false, error: '角度必须在-360度到360度之间' })
+        return
+      }
+
+      // 验证方向
+      const validDirections = ['up', 'down', 'left', 'right']
+      if (!validDirections.includes(direction)) {
+        resolve({ success: false, error: `无效的方向: ${direction}，有效值为: ${validDirections.join(', ')}` })
+        return
+      }
+
+      // 检查 camera 和 activeSource
+      if (!camera || !camera.activeSource) {
+        resolve({ success: false, error: '摄像头未初始化或 activeSource 未准备好' })
+        return
+      }
+
+      // 获取 profileToken
+      const profileToken = camera.activeSource?.profileToken || camera.activeSource?.ptz?.token
+      if (!profileToken) {
+        resolve({ success: false, error: '无法获取 profileToken' })
+        return
+      }
+
+      
+
+      
+      // 执行连续移动
+      camera.continuousMove({
+        profileToken: profileToken,
+        x: 0,
+        y: 1,
+        zoom: 0,  // 不改变 Zoom
+        // timeout: 1000,
+        speed: {
+          x: 1,
+          y: 1,
+        }
+      }, (error: any, result: any) => {
+        if (error) {
+          resolve({ success: false, error: `continuousMove 失败: ${error.message || error}` })
+          return
+        }
+      })
+    } catch (e: any) {
+      resolve({ success: false, error: e.message || String(e) })
     }
   })
-})
+}
 
 
 function OCR(image: Buffer) {
