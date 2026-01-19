@@ -24,15 +24,15 @@ device.init().then(async () => {
   // }
   // console.log(directions)
   // const direction = directions['up']
-  // y 转动完整是 5s
-  // x 转动完整是 9s
+  // y 转动完整是 5s 一圈是100度
+  // x 转动完整是 9s 一圈是280度
   device.ptzMove({
     speed: {
-      x: -1,
+      x: 1,
       y: 0,
       z: 0,
     },
-    timeout: 9
+    timeout: 20
   }).then(() => {
     console.log('移动成功');
   }).catch((error: any) => {
