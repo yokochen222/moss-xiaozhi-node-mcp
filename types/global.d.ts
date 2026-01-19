@@ -1,3 +1,4 @@
+declare module 'node-onvif'
 declare module 'onvif' {
   export interface CamOptions {
     hostname: string
