@@ -2,29 +2,29 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import executeShortcut from "./execute";
 
-function qishui_music_control(command: string) {
+async function qishui_music_control(command: string) {
   if (command === "play") {
-    executeShortcut("Command+Option+1");
+    await executeShortcut("Command+Option+1");
     return true;
   }
   if (command === "pause") {
-    executeShortcut("Command+Option+1");
+    await executeShortcut("Command+Option+1");
     return true;
   }
   if (command === "next") {
-    executeShortcut("Command+Option+3");
+    await executeShortcut("Command+Option+3");
     return true;
   }
   if (command === "previous") {
-    executeShortcut("Command+Option+2");
+    await executeShortcut("Command+Option+2");
     return true;
   }
   if (command === "volume_up") {
-    executeShortcut("Command+Option+4");
+    await executeShortcut("Command+Option+4");
     return true;
   }
   if (command === "volume_down") {
-    executeShortcut("Command+Option+5");
+    await executeShortcut("Command+Option+5");
     return true;
   }
 
@@ -52,7 +52,7 @@ export default function (server: McpServer) {
     async (args) => {
       const command = args.command as string;
       console.log(`[qishui_music_control] 执行命令: ${command}`);
-      const success = qishui_music_control(command);
+      const success = await qishui_music_control(command);
       if (success) {
         return {
           content: [
@@ -81,5 +81,5 @@ export default function (server: McpServer) {
   );
 }
 
-qishui_music_control("volume_up");
+// qishui_music_control("volume_up"); // Test code - commented out
 
