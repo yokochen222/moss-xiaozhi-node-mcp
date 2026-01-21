@@ -23,6 +23,9 @@ importers:
       node-onvif:
         specifier: ^0.1.7
         version: 0.1.7
+      onvif:
+        specifier: ^0.8.1
+        version: 0.8.1
       ws:
         specifier: ^8.18.0
         version: 8.19.0
@@ -863,6 +866,10 @@ packages:
 
   once@1.4.0:
     resolution: {integrity: sha512-lNaJgI+2Q5URQBkccEKHTQOPaXdUxnZZElQTZY0MFUAuaEqe1E+Nyvgdz/aIyNi6Z9MzO5dv1H8n58/GELp3+w==}
+
+  onvif@0.8.1:
+    resolution: {integrity: sha512-D0VSuTQutZWQsaWWvh7acbengYNJew25kXpXc/stJc6/xYx2MwU1tkIZA23bu12hr5MxstSQ55decY7we2/LWw==}
+    engines: {node: '>=14.0'}
 
   p-finally@1.0.0:
     resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
@@ -2025,6 +2032,10 @@ snapshots:
   once@1.4.0:
     dependencies:
       wrappy: 1.0.2
+
+  onvif@0.8.1:
+    dependencies:
+      xml2js: 0.6.2
 
   p-finally@1.0.0: {}
 

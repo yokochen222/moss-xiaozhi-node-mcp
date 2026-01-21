@@ -1,7 +1,6 @@
 import onvif from 'node-onvif'
 import OCR from './utils'
 
-
 const username = 'admin'
 const password = 'admin123'
 let device = new onvif.OnvifDevice({
@@ -12,36 +11,80 @@ let device = new onvif.OnvifDevice({
 
 device.init().then(async () => {
   const currentProfile = device.getCurrentProfile()
-  // // # 摄像头水平转 360° 所需时间（单位：秒），请根据实际调整
-  // const FULL_ROTATION_TIME = 5
-  // const angle = 180
-  // const speed = Math.abs(angle) / 360.0 * FULL_ROTATION_TIME
-  // const directions = {
-  //   'up':           {'x': 0.0,     'y': speed},
-  //   'down':           {'x': 0.0,     'y': -speed},
-  //   'left':         {'x': -speed,  'y': 0.0},
-  //   'right':        {'x': speed,   'y': 0.0},
-  // }
-  // console.log(directions)
-  // const direction = directions['up']
-  device.ptzMove({
-    speed: {
-      x: 0,
-      y: -1,
-      z: 0,
-    },
-    timeout: 60
-  }).then(() => {
-    // X 1000ms * 6转动到限位位置
-    // Y 500ms * 4转动到限位位置
-    setTimeout(() => {
-      device.ptzStop().then(() => {
-        console.log('Succeeded to stop.');
-      })
-    }, 500);
-  }).catch((error: any) => {
-    console.error('移动失败', error);
-  });
+  // console.time('ptzMove')
+  // device.ptzMove({
+  //   speed: {
+  //     x: 0,
+  //     y: 1,
+  //     z: 0,
+  //   },
+  //   timeout: 4
+  // }).then(() => {
+  //   // setTimeout(() => {
+  //   //   device.ptzStop().then(() => {
+  //   //     console.log('Succeeded to stop.');
+  //   //   })
+  //   // }, 1000);
+  //   console.log('ptzMove done');
+  // }).catch((error: any) => {
+  //   console.error('ptzMove error', error);
+  // });
+  // await device.services.ptz.continuousMove({
+  //   ProfileToken: currentProfile.token,
+  //   Velocity: {x: 0, y: 1, z: 0},
+  // })
+  // setTimeout(() => {
+  //   device.ptzStop().then(() => {
+  //     console.log('Succeeded to stop.');
+  //   })
+  // }, 38.888)
+
+  moveY(90, 1)
+
 }).catch((error: any) => {
   console.error('初始化失败:', error);
 });
+
+
+/**
+ * Y 轴转动
+ * @param degree 转动角度
+ * @param token 设备token
+ * @param direction 转动方向 1: 向上 -1: 向下
+*/
+async function moveY(degree: number, direction: number) {
+  let _d = degree
+  // moveOneDegree(direction).then(() => {
+  //   if (_d) {
+  //     moveOneDegree(direction)
+  //   }
+  // })
+  console.time('moveY')
+  const move = async () => {
+    _d--
+    await moveOneDegree(direction)
+    if (_d) {
+      await move()
+    }
+  }
+  await move()
+  console.timeEnd('moveY')
+}
+/**
+ * 控制Y轴电机转动1度
+ * @param direction 方向
+*/
+async function moveOneDegree(direction: number) {
+  return new Promise(async(resolve, reject) => {
+    const currentProfile = device.getCurrentProfile()
+    await device.services.ptz.continuousMove({
+      ProfileToken: currentProfile.token,
+      Velocity: {x: 0, y: direction, z: 0},
+    })
+    console.log('acee')
+    setTimeout(() => {
+      device.ptzStop()
+      resolve(true)
+    }, 38.888)
+  })
+}
