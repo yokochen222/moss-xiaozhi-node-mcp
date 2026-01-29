@@ -1,0 +1,32 @@
+[
+  {
+    "name": "汽水音乐",
+    "description": "控制汽水音乐APP 的播放、暂停、上一曲、下一曲、音量加、音量减",
+    "shortcuts": [
+      {
+        "name": "播放",
+        "command": "command+option+1"
+      },
+      {
+        "name": "暂停",
+        "command": "command+option+1"
+      },
+      {
+        "name": "上一曲",
+        "command": "command+option+2"
+      },
+      {
+        "name": "下一曲",
+        "command": "command+option+3"
+      },
+      {
+        "name": "音量加",
+        "command": "command+option+4"
+      },
+      {
+        "name": "音量减",
+        "command": "command+option+5"
+      }
+    ]
+  }
+]

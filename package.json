@@ -7,9 +7,11 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "test": "tsx src/camera/tools/camera.ts",
     "dev": "tsx src/mcp_pipe.ts",
-    "test2": "tsx src/shortcuts/tools/execute.ts"
+    "build": "tsc",
+    "start": "node dist/mcp_pipe.js",
+    "type-check": "tsc --noEmit",
+    "lint": "tsc --noEmit"
   },
   "keywords": [
     "mcp",

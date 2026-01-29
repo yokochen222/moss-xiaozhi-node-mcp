@@ -1,26 +1,17 @@
 {
   "mcpServers": {
-    "shortcuts-mcp": {
-      "type": "stdio",
-      "command": "tsx",
-      "args": ["src/shortcuts/index.ts"],
-      "disabled": false
-    },
-    "remote-sse-server": {
-      "type": "sse",
-      "url": "https://api.example.com/sse",
-      "disabled": true
-    },
-    "remote-http-server": {
-      "type": "http",
-      "url": "https://api.example.com/mcp",
-      "disabled": true
-    },
-    "playwright": {
-      "type": "stdio",
+    "yo-onvif-mcp": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
-      "disabled": true
+      "args": ["yo-onvif-mcp"],
+      "env": {
+        "ONVIF_USERNAME": "admin",
+        "ONVIF_PASSWORD": "admin123",
+        "ONVIF_XADDR": "http://192.168.31.10:80/onvif/device_service"
+      }
+    },
+    "yo-execute-shortcuts-mcp": {
+      "command": "npx",
+      "args": ["yo-execute-shortcuts-mcp", "--config", "yo-execute-shortcuts-mcp.json"]
     }
   }
 }
