@@ -63,6 +63,11 @@ function buildStdioCommand(
     throw new Error(`服务器 '${target}' 缺少 'command'`);
   }
 
+  // 在Windows系统上，npx命令需要通过cmd.exe执行
+  if (process.platform === 'win32' && command === 'npx') {
+    return { cmd: ['cmd.exe', '/c', command, ...args], env };
+  }
+
   return { cmd: [command, ...args], env };
 }
 
