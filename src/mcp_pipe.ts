@@ -22,6 +22,7 @@ import { config } from 'dotenv';
 import { logger } from './utils/logger.js';
 import { loadConfig, getEnabledServers } from './utils/config.js';
 import { buildServerCommand } from './utils/server.js';
+import { connectMCPHTTPWithRetry } from './utils/mcp_http_client.js';
 import type { ServerConfig } from './types/config.js';
 
 // 自动加载 .env 文件中的环境变量
@@ -407,14 +408,47 @@ async function main(): Promise<void> {
   }
   logger.info(`正在启动服务器: ${enabled.join(', ')}`);
 
-  // 启动所有服务器（并行）
-  const tasks = enabled.map((target) => {
+  // 分离 stdio 和 HTTP 类型的服务器
+  const stdioServers: string[] = [];
+  const httpServers: string[] = [];
+
+  for (const target of enabled) {
     const serverConfig = serversCfg[target];
     if (!serverConfig) {
       throw new Error(`服务器 '${target}' 配置不存在`);
     }
-    return connectWithRetry(endpointUrl, target, serverConfig);
-  });
+
+    const type = (serverConfig.type || serverConfig.transportType || 'stdio').toLowerCase();
+    if (type === 'stdio') {
+      stdioServers.push(target);
+    } else if (type === 'sse' || type === 'http' || type === 'streamablehttp') {
+      httpServers.push(target);
+    }
+  }
+
+  logger.info(`stdio 服务器: ${stdioServers.join(', ') || '无'}`);
+  logger.info(`HTTP 服务器: ${httpServers.join(', ') || '无'}`);
+
+  // 启动所有服务器（并行）
+  const tasks: Promise<void>[] = [];
+
+  // stdio 服务器使用现有的子进程方式
+  for (const target of stdioServers) {
+    const serverConfig = serversCfg[target];
+    if (!serverConfig) {
+      throw new Error(`服务器 '${target}' 配置不存在`);
+    }
+    tasks.push(connectWithRetry(endpointUrl, target, serverConfig));
+  }
+
+  // HTTP 服务器使用新的 MCP HTTP 客户端
+  for (const target of httpServers) {
+    const serverConfig = serversCfg[target];
+    if (!serverConfig) {
+      throw new Error(`服务器 '${target}' 配置不存在`);
+    }
+    tasks.push(connectMCPHTTPWithRetry(endpointUrl, target, serverConfig));
+  }
 
   // 永远运行所有任务；如果任何任务崩溃，它会在内部自动重试
   await Promise.all(tasks);

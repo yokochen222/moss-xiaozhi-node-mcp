@@ -41,10 +41,6 @@ export function buildServerCommand(
     return buildStdioCommand(target, serverConfig, childEnv);
   }
 
-  if (type === 'sse' || type === 'http' || type === 'streamablehttp') {
-    return buildHttpCommand(target, serverConfig, type, childEnv);
-  }
-
   throw new Error(`不支持的服务器类型: ${type}`);
 }
 
@@ -69,38 +65,4 @@ function buildStdioCommand(
   }
 
   return { cmd: [command, ...args], env };
-}
-
-/**
- * 构建 HTTP/SSE 类型的命令（使用 mcp-proxy）
- */
-function buildHttpCommand(
-  target: string,
-  config: ServerConfig,
-  type: TransportType,
-  env: Record<string, string>
-): ServerCommand {
-  const url = config.url;
-  if (!url) {
-    throw new Error(`服务器 '${target}' (类型 ${type}) 缺少 'url'`);
-  }
-
-  // 使用 Python 运行 mcp-proxy 模块
-  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-  const cmd: string[] = [pythonCmd, '-m', 'mcp_proxy'];
-
-  if (type === 'http' || type === 'streamablehttp') {
-    cmd.push('--transport', 'streamablehttp');
-  }
-
-  // 添加可选的 headers
-  if (config.headers) {
-    for (const [hk, hv] of Object.entries(config.headers)) {
-      cmd.push('-H', hk, String(hv));
-    }
-  }
-
-  cmd.push(url);
-
-  return { cmd, env };
 }
