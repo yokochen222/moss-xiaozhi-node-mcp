@@ -2,7 +2,7 @@
 
 /**
  * MCP stdio <-> WebSocket 管道程序
- * 版本: 0.3.0
+ * 版本: 0.4.0
  *
  * 用法（环境变量）:
  *     export MCP_ENDPOINT=<ws_endpoint>
@@ -29,9 +29,41 @@ import type { ServerConfig } from './types/config.js';
 config();
 
 // 重连设置
-const INITIAL_BACKOFF = 1; // 初始等待时间（秒）
-const MAX_BACKOFF = 600; // 最大等待时间（秒）
-const PROCESS_SHUTDOWN_TIMEOUT = 5000; // 进程关闭超时时间（毫秒）
+const INITIAL_BACKOFF = 1;       // 初始等待时间（秒）
+const MAX_BACKOFF = 600;          // 最大等待时间（秒）
+const PROCESS_SHUTDOWN_TIMEOUT = 5000;  // 进程关闭超时时间（毫秒）
+
+// 全局关闭标志
+let isShuttingDown = false;
+
+/**
+ * 安全地清理事件监听器
+ */
+function cleanupListeners(
+  process: ChildProcess,
+  websocket?: WebSocket
+): void {
+  // 清理 stdout 监听器
+  if (process.stdout) {
+    process.stdout.removeAllListeners('data');
+    process.stdout.removeAllListeners('end');
+    process.stdout.removeAllListeners('error');
+  }
+  // 清理 stderr 监听器
+  if (process.stderr) {
+    process.stderr.removeAllListeners('data');
+    process.stderr.removeAllListeners('end');
+    process.stderr.removeAllListeners('error');
+  }
+  // 清理进程 exit 监听器
+  process.removeAllListeners('exit');
+  // 清理 WebSocket 监听器
+  if (websocket) {
+    websocket.removeAllListeners('message');
+    websocket.removeAllListeners('close');
+    websocket.removeAllListeners('error');
+  }
+}
 
 /**
  * 从 WebSocket 读取数据并写入进程 stdin
@@ -39,46 +71,69 @@ const PROCESS_SHUTDOWN_TIMEOUT = 5000; // 进程关闭超时时间（毫秒）
 async function pipeWebSocketToProcess(
   websocket: WebSocket,
   process: ChildProcess,
-  target: string
+  target: string,
+  onWebSocketClose: () => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    let resolved = false;
+
+    const done = (err?: Error) => {
+      if (resolved) return;
+      resolved = true;
+      websocket.off('message', messageHandler);
+      websocket.off('close', closeHandler);
+      websocket.off('error', errorHandler);
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
+
     const messageHandler = (message: WebSocket.Data) => {
       try {
         const data =
           message instanceof Buffer ? message.toString('utf-8') : String(message);
-        logger.debug(`[${target}] << ${data.substring(0, 120)}...`);
+        logger.debug(`[websocket] << ${data.substring(0, 120)}${data.length > 120 ? '...' : ''}`);
 
-        if (process.stdin && !process.stdin.destroyed) {
-          // MCP 协议使用换行符分隔的 JSON-RPC 消息
-          const message = data.endsWith('\n') ? data : data + '\n';
-          process.stdin.write(message);
+        if (!process.stdin || process.stdin.destroyed) {
+          logger.warning(`[websocket] 进程 stdin 不可用，丢弃消息`);
+          done(new Error('进程 stdin 不可用'));
+          return;
+        }
+
+        // MCP 协议使用换行符分隔的 JSON-RPC 消息
+        const messageToSend = data.endsWith('\n') ? data : data + '\n';
+        const canWrite = process.stdin.write(messageToSend);
+
+        if (!canWrite) {
+          logger.debug(`[websocket] stdin 缓冲区已满，等待 drain 事件`);
+          process.stdin.once('drain', () => {
+            logger.debug(`[websocket] stdin 缓冲区已清空`);
+          });
         }
       } catch (error) {
         const err = error instanceof Error ? error : new Error(String(error));
-        logger.error(`[${target}] WebSocket 到进程管道错误`, err);
-        reject(err);
+        logger.error(`[websocket] WebSocket 到进程管道错误`, err);
+        done(err);
       }
     };
 
     const closeHandler = () => {
+      logger.info(`[websocket] WebSocket 连接已关闭`);
+      onWebSocketClose();
       if (process.stdin && !process.stdin.destroyed) {
         process.stdin.end();
       }
-      websocket.off('message', messageHandler);
-      websocket.off('close', closeHandler);
-      websocket.off('error', errorHandler);
-      resolve();
+      done();
     };
 
     const errorHandler = (error: Error) => {
-      logger.error(`[${target}] WebSocket 错误`, error);
+      logger.error(`[websocket] WebSocket 错误`, error);
       if (process.stdin && !process.stdin.destroyed) {
         process.stdin.end();
       }
-      websocket.off('message', messageHandler);
-      websocket.off('close', closeHandler);
-      websocket.off('error', errorHandler);
-      reject(error);
+      done(error);
     };
 
     websocket.on('message', messageHandler);
@@ -89,12 +144,12 @@ async function pipeWebSocketToProcess(
 
 /**
  * 从进程 stdout 读取数据并发送到 WebSocket
- * MCP 协议使用换行符分隔的 JSON-RPC 消息，需要缓冲数据并按行发送
  */
 async function pipeProcessToWebSocket(
   process: ChildProcess,
   websocket: WebSocket,
-  target: string
+  target: string,
+  onProcessExit: () => void
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     if (!process.stdout) {
@@ -102,8 +157,24 @@ async function pipeProcessToWebSocket(
       return;
     }
 
+    let resolved = false;
     let buffer = '';
     process.stdout.setEncoding('utf-8');
+
+    const done = (err?: Error) => {
+      if (resolved) return;
+      resolved = true;
+      // 清理所有监听器
+      process.stdout?.removeAllListeners('data');
+      process.stdout?.removeAllListeners('end');
+      process.stdout?.removeAllListeners('error');
+      process.removeAllListeners('exit');
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    };
 
     const dataHandler = (data: string) => {
       if (websocket.readyState === WebSocket.OPEN) {
@@ -113,7 +184,7 @@ async function pipeProcessToWebSocket(
 
         for (const line of lines) {
           if (line.trim()) {
-            logger.debug(`[${target}] >> ${line.substring(0, 120)}...`);
+            logger.debug(`[websocket] >> ${line.substring(0, 120)}${line.length > 120 ? '...' : ''}`);
             websocket.send(line);
           }
         }
@@ -122,29 +193,23 @@ async function pipeProcessToWebSocket(
 
     const endHandler = () => {
       if (buffer.trim() && websocket.readyState === WebSocket.OPEN) {
-        logger.debug(`[${target}] >> ${buffer.substring(0, 120)}...`);
+        logger.debug(`[websocket] >> ${buffer.substring(0, 120)}${buffer.length > 120 ? '...' : ''}`);
         websocket.send(buffer);
         buffer = '';
       }
-      logger.info(`[${target}] 进程输出已结束`);
+      logger.info(`[websocket] 进程 stdout 已结束`);
+      onProcessExit();
+      done();
     };
 
     const errorHandler = (error: Error) => {
-      logger.error(`[${target}] 进程到 WebSocket 管道错误`, error);
-      process.stdout?.off('data', dataHandler);
-      process.stdout?.off('end', endHandler);
-      process.stdout?.off('error', errorHandler);
-      process.off('exit', exitHandler);
-      reject(error);
+      logger.error(`[websocket] 进程 stdout 错误`, error);
+      done(error);
     };
 
     const exitHandler = (code: number | null, signal: NodeJS.Signals | null) => {
-      logger.info(`[${target}] 进程退出，代码: ${code}, 信号: ${signal}`);
-      process.stdout?.off('data', dataHandler);
-      process.stdout?.off('end', endHandler);
-      process.stdout?.off('error', errorHandler);
-      process.off('exit', exitHandler);
-      resolve();
+      logger.info(`[websocket] 进程已退出，代码: ${code}, 信号: ${signal}`);
+      done();
     };
 
     process.stdout.on('data', dataHandler);
@@ -167,8 +232,19 @@ async function pipeProcessStderrToTerminal(
       return;
     }
 
+    let resolved = false;
     const childStderr = process.stderr;
     childStderr.setEncoding('utf-8');
+
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      childStderr.removeAllListeners('data');
+      childStderr.removeAllListeners('end');
+      childStderr.removeAllListeners('error');
+      process.removeAllListeners('exit');
+      resolve();
+    };
 
     const dataHandler = (data: string) => {
       const globalStderr = globalThis.process.stderr;
@@ -178,18 +254,21 @@ async function pipeProcessStderrToTerminal(
     };
 
     const endHandler = () => {
-      logger.info(`[${target}] 进程 stderr 输出已结束`);
+      logger.info(`[websocket] 进程 stderr 输出已结束`);
+      done();
+    };
+
+    const errorHandler = () => {
+      logger.warning(`[websocket] 进程 stderr 错误`);
     };
 
     const exitHandler = () => {
-      childStderr.off('data', dataHandler);
-      childStderr.off('end', endHandler);
-      process.off('exit', exitHandler);
-      resolve();
+      done();
     };
 
     childStderr.on('data', dataHandler);
     childStderr.on('end', endHandler);
+    childStderr.on('error', errorHandler);
     process.on('exit', exitHandler);
   });
 }
@@ -205,7 +284,7 @@ async function terminateProcess(
     return;
   }
 
-  logger.info(`[${target}] 正在终止服务器进程`);
+  logger.info(`[websocket] 正在终止服务器进程`);
 
   try {
     // 先尝试优雅关闭
@@ -223,7 +302,7 @@ async function terminateProcess(
 
     if (!exited) {
       // 如果进程没有退出，强制终止
-      logger.warning(`[${target}] 进程未在 ${PROCESS_SHUTDOWN_TIMEOUT}ms 内退出，强制终止`);
+      logger.warning(`[websocket] 进程未在 ${PROCESS_SHUTDOWN_TIMEOUT}ms 内退出，强制终止`);
       process.kill('SIGKILL');
       await new Promise<void>((resolve) => {
         process.once('exit', () => resolve());
@@ -231,10 +310,10 @@ async function terminateProcess(
       });
     }
 
-    logger.info(`[${target}] 服务器进程已终止`);
+    logger.info(`[websocket] 服务器进程已终止`);
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
-    logger.error(`[${target}] 终止进程时出错`, err);
+    logger.error(`[websocket] 终止进程时出错`, err);
   }
 }
 
@@ -250,26 +329,48 @@ async function connectToServer(
   let websocket: WebSocket | undefined;
 
   try {
-    logger.info(`[${target}] 正在连接到 WebSocket 服务器...`);
+    logger.info(`[websocket] 正在连接到 WebSocket 服务器`);
 
     websocket = new WebSocket(uri);
 
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+
       const openHandler = () => {
-        logger.info(`[${target}] 成功连接到 WebSocket 服务器`);
+        if (settled) return;
+        settled = true;
+        logger.info(`[websocket] ✅ 成功连接`);
         websocket!.off('open', openHandler);
         websocket!.off('error', errorHandler);
         resolve();
       };
 
-      const errorHandler = (error: Error) => {
+      const errorHandler = (error: unknown) => {
+        if (settled) return;
+        settled = true;
         websocket!.off('open', openHandler);
         websocket!.off('error', errorHandler);
-        reject(error);
+        // 构造有意义的错误信息
+        const errorMsg = error instanceof Error
+          ? error.message
+          : typeof error === 'string' ? error
+          : error ? String(error) : '未知错误';
+        reject(new Error(errorMsg || 'WebSocket 连接失败'));
       };
 
       websocket!.on('open', openHandler);
       websocket!.on('error', errorHandler);
+
+      // WebSocket 连接超时
+      setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          websocket!.off('open', openHandler);
+          websocket!.off('error', errorHandler);
+          websocket!.terminate();
+          reject(new Error('WebSocket 连接超时'));
+        }
+      }, 30000);
     });
 
     // 启动服务器进程
@@ -281,45 +382,58 @@ async function connectToServer(
 
     logger.info(`[${target}] 已启动服务器进程: ${cmd.join(' ')}`);
 
+    // 连接断开/进程退出的标志
+    let shouldReconnect = false;
+    let disconnectReason = '';
+
+    const onWebSocketClose = () => {
+      if (!shouldReconnect) {
+        shouldReconnect = true;
+        disconnectReason = 'WebSocket 连接已关闭';
+      }
+    };
+
+    const onProcessExit = () => {
+      if (!shouldReconnect) {
+        shouldReconnect = true;
+        disconnectReason = '服务器进程已退出';
+      }
+    };
+
     // 创建三个管道任务
-    const wsToProcess = pipeWebSocketToProcess(websocket, process, target);
-    const processToWs = pipeProcessToWebSocket(process, websocket, target);
+    const wsToProcess = pipeWebSocketToProcess(websocket, process, target, onWebSocketClose);
+    const processToWs = pipeProcessToWebSocket(process, websocket, target, onProcessExit);
     const stderrPipe = pipeProcessStderrToTerminal(process, target);
 
-    // 等待任一任务完成（WebSocket 关闭或进程退出）
-    await Promise.race([
-      wsToProcess.then(async () => {
-        // WebSocket 关闭，关闭 stdin 让进程知道没有更多输入
-        if (process && process.stdin && !process.stdin.destroyed) {
-          process.stdin.end();
-        }
-        // 等待进程退出（最多 PROCESS_SHUTDOWN_TIMEOUT 毫秒）
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            if (process) {
-              process.once('exit', () => resolve());
-            } else {
-              resolve();
-            }
-          }),
-          new Promise<void>((resolve) => {
-            setTimeout(() => resolve(), PROCESS_SHUTDOWN_TIMEOUT);
-          }),
-        ]);
-        // 等待其他管道任务完成
-        return Promise.all([processToWs, stderrPipe]);
-      }),
-      processToWs.then(() => {
-        // 进程退出，等待其他任务完成
-        return Promise.all([wsToProcess.catch(() => {}), stderrPipe]);
-      }),
-    ]);
+    // 等待任一任务完成
+    const completedTask = await Promise.race([wsToProcess, processToWs]);
+
+    // 清理所有监听器（防止内存泄漏）
+    cleanupListeners(process, websocket);
+
+    // 等待其他管道任务完成
+    await Promise.allSettled([wsToProcess, processToWs, stderrPipe]);
+
+    // 清理监听器
+    cleanupListeners(process, websocket);
+
+    // 如果是非正常断开，抛出错误以触发重连
+    if (shouldReconnect && !isShuttingDown) {
+      throw new Error(`[websocket] ${disconnectReason}，准备重连`);
+    }
   } catch (error) {
-    const err = error instanceof Error ? error : new Error(String(error));
-    if (err.message.includes('WebSocket') || websocket?.readyState === WebSocket.CLOSED) {
-      logger.error(`[${target}] WebSocket 连接关闭`, err);
+    // 构造有意义的错误信息
+    const errorMsg = error instanceof Error
+      ? error.message
+      : typeof error === 'string' ? error
+      : error ? String(error) : '未知错误';
+    const err = error instanceof Error ? error : new Error(errorMsg || '连接错误');
+
+    if (err.message.includes('WebSocket') || err.message.includes('超时') ||
+        websocket?.readyState === WebSocket.CLOSED || websocket?.readyState === WebSocket.CLOSING) {
+      logger.error(`[websocket] ❌ WebSocket 连接失败 (${uri}): ${err.message}`);
     } else {
-      logger.error(`[${target}] 连接错误`, err);
+      logger.error(`[websocket] ❌ 连接错误 (${uri}): ${err.message}`);
     }
     throw err;
   } finally {
@@ -345,25 +459,37 @@ async function connectWithRetry(
   let reconnectAttempt = 0;
   let backoff = INITIAL_BACKOFF;
 
-  while (true) {
+  while (!isShuttingDown) {
     try {
       if (reconnectAttempt > 0) {
         logger.info(
-          `[${target}] 等待 ${backoff}s 后进行第 ${reconnectAttempt} 次重连尝试...`
+          `[websocket]⏳ 等待 ${backoff}s 后进行第 ${reconnectAttempt} 次重连尝试 (${uri})...`
         );
         await new Promise((resolve) => setTimeout(resolve, backoff * 1000));
       }
 
       // 尝试连接
       await connectToServer(uri, target, serverConfig);
-      // 如果连接成功，重置重连计数
+
+      // 如果连接成功（正常退出循环），重置重连计数
       reconnectAttempt = 0;
       backoff = INITIAL_BACKOFF;
+
+      // 如果是正常关闭，不再重连
+      if (isShuttingDown) {
+        break;
+      }
     } catch (error) {
+      // 检查是否正在关闭
+      if (isShuttingDown) {
+        logger.info(`[websocket]正在关闭，跳过重连`);
+        break;
+      }
+
       reconnectAttempt++;
       const err = error instanceof Error ? error : new Error(String(error));
       logger.warning(
-        `[${target}] 连接关闭（尝试 ${reconnectAttempt}）: ${err.message}`
+        `[websocket] ❌ 连接失败 (${uri})，尝试 ${reconnectAttempt}: ${err.message}`
       );
       // 计算下次重连的等待时间（指数退避）
       backoff = Math.min(backoff * 2, MAX_BACKOFF);
@@ -372,11 +498,45 @@ async function connectWithRetry(
 }
 
 /**
- * 信号处理器
+ * 信号处理器 - 优雅关闭
  */
 function signalHandler(sig: string): void {
-  logger.info(`收到中断信号 ${sig}，正在关闭...`);
-  process.exit(0);
+  if (isShuttingDown) {
+    logger.warning(`[websocket]正在关闭中，请等待...`);
+    return;
+  }
+
+  logger.info(`[websocket]收到中断信号 ${sig}，开始优雅关闭...`);
+  isShuttingDown = true;
+
+  // 给服务器一点时间处理
+  setTimeout(() => {
+    logger.info('[websocket]所有服务器正在关闭，程序即将退出');
+    process.exit(0);
+  }, 1000);
+}
+
+/**
+ * 清理所有服务器进程
+ */
+async function cleanupAllServers(serverProcesses: Map<string, ChildProcess>): Promise<void> {
+  logger.info(`[websocket]正在关闭 ${serverProcesses.size} 个服务器进程...`);
+
+  const cleanupPromises: Promise<void>[] = [];
+
+  for (const [target, proc] of serverProcesses.entries()) {
+    cleanupPromises.push(
+      (async () => {
+        try {
+          await terminateProcess(proc, target);
+        } catch (e) {
+          logger.warning(`[websocket] 关闭时出错: ${e}`);
+        }
+      })()
+    );
+  }
+
+  await Promise.allSettled(cleanupPromises);
 }
 
 /**
@@ -387,10 +547,34 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => signalHandler('SIGINT'));
   process.on('SIGTERM', () => signalHandler('SIGTERM'));
 
+  // 捕获未处理的 Promise 拒绝
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('未处理的 Promise 拒绝', reason instanceof Error ? reason : new Error(String(reason)));
+  });
+
+  // 捕获未处理的异常
+  process.on('uncaughtException', (error) => {
+    logger.error('未捕获的异常', error);
+    isShuttingDown = true;
+    process.exit(1);
+  });
+
   // 从环境变量获取 WebSocket 端点
   const endpointUrl = process.env.MCP_ENDPOINT;
   if (!endpointUrl) {
     logger.error('请设置 `MCP_ENDPOINT` 环境变量');
+    logger.info('例如: export MCP_ENDPOINT=ws://localhost:8080/mcp');
+    process.exit(1);
+  }
+
+  // 验证 WebSocket URL 格式
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(endpointUrl);
+    logger.info(`[websocket] 端点: ${parsedUrl.href}`);
+  } catch {
+    logger.error(`无效的 WebSocket URL: ${endpointUrl}`);
+    logger.info('URL 格式应为: ws://host:port/path 或 wss://host:port/path');
     process.exit(1);
   }
 
@@ -404,7 +588,9 @@ async function main(): Promise<void> {
     logger.info(`跳过禁用的服务器: ${skipped.join(', ')}`);
   }
   if (enabled.length === 0) {
-    throw new Error('配置中未找到启用的 mcpServers');
+    logger.error('配置中未找到启用的 mcpServers');
+    logger.info('请在 mcp_config.json 中至少启用一个服务器，或检查 $MCP_CONFIG 路径');
+    process.exit(1);
   }
   logger.info(`正在启动服务器: ${enabled.join(', ')}`);
 
@@ -423,10 +609,12 @@ async function main(): Promise<void> {
       stdioServers.push(target);
     } else if (type === 'sse' || type === 'http' || type === 'streamablehttp') {
       httpServers.push(target);
+    } else {
+      logger.warning(`[websocket] 跳过不支持的传输类型: ${type}`);
     }
   }
 
-  logger.info(`stdio 服务器: ${stdioServers.join(', ') || '无'}`);
+  logger.info(`STDIO 服务器: ${stdioServers.join(', ') || '无'}`);
   logger.info(`HTTP 服务器: ${httpServers.join(', ') || '无'}`);
 
   // 启动所有服务器（并行）
