@@ -1,5 +1,12 @@
 ## 本工程是MOSS - XIAOZHI PC端MCP客户端
-本工程能支持 安装第三方 MCP工具，支持 npx 和 sse 连接MCP Server
+本工程能支持 安装第三方 MCP工具，支持 sse 及 Streamable 连接 MCP Server
+
+## 接入点配置
+.env文件
+- MCP WebSocket 端点
+MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=xxx
+- 日志级别: DEBUG, INFO, WARN, ERROR
+LOG_LEVEL=ERROR
 
 ## 安装命令
 `pnpm install`
